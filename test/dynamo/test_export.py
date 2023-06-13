@@ -2411,6 +2411,29 @@ def forward(self, x):
         buffer = io.BytesIO()
         torch.save(gm, buffer)
 
+        def test_export_with_inline_constrains(self):
+            def f(x):
+                a = x.item()
+                constrain_as_size(a, 4, 7)
+                return torch.empty((a, 4))
+
+            with self.assertRaisesRegex(
+                torch._dynamo.exc.UserError, r"Invalid value 20 for range \[4:7\]"
+            ) as cm:
+                torch._export.export(f, (torch.tensor([20]),))
+
+            ep = torch._export.export(f, (torch.tensor([5]),))
+            self.assertEqual(
+                ep.graph_module(torch.tensor([6]))[0],
+                torch.empty((6, 4)),
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"_local_scalar_dense_default is outside of inline constraint \[4, 7\]",
+            ) as cm:
+                ep.graph_module(torch.tensor([30]))
+
     def test_export_dynamic_dim_not_1(self):
         x = torch.randn([1, 1, 1])
 
