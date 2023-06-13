@@ -23,6 +23,7 @@ def merge_fx_graphs(dbg_log, dbg_code_dst_name="graph_merger"):
                 assert(len(line_items) == 2)
                 current_graph_gen_code_path = line_items[1].strip()
                 assert(current_graph_gen_code_path.endswith("debug"))
+                print("[liaoxuan] current_graph_gen_code_path:", current_graph_gen_code_path, ",", line)
                 assert(os.path.exists(current_graph_gen_code_path))
                 print("\nGenerated code of graph {} is placed at {}".format(str(graph_idx), current_graph_gen_code_path))
 

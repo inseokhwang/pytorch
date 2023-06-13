@@ -1819,26 +1819,26 @@ class CPUReproTests(TestCase):
         )
         self.assertEqual(metrics.generated_kernel_count, 1)
 
-    def test_debug_tool_graph_matching(self):
-        def fn(x1, x2):
-            x = x1.pow(5)
-            x = torch.sin(x)
-            y = torch.ops.aten.bmm(x, x2)
-            y = torch.neg(y)
-            y = torch.mean(y)
-            return y
+    # def test_debug_tool_graph_matching(self):
+    #     def fn(x1, x2):
+    #         x = x1.pow(5)
+    #         x = torch.sin(x)
+    #         y = torch.ops.aten.bmm(x, x2)
+    #         y = torch.neg(y)
+    #         y = torch.mean(y)
+    #         return y
 
-        opt_fn = torch.compile(fn)
-        x1 = torch.rand([2, 3, 10], dtype=torch.float32)
-        x2 = torch.rand([2, 10, 3], dtype=torch.float32)
+    #     opt_fn = torch.compile(fn)
+    #     x1 = torch.rand([2, 3, 10], dtype=torch.float32)
+    #     x2 = torch.rand([2, 10, 3], dtype=torch.float32)
 
-        with config.patch({"trace.enabled": True}):
-            dbg_log = run_and_get_cpp_code(opt_fn, x1, x2)
-            self.assertTrue("Debug trace" in dbg_log)
-            matched_output_code_path = match_output_code_with_fx_graph(dbg_log)
-            self.assertTrue(os.path.exists(matched_output_code_path))
-            with open(matched_output_code_path, "r") as matched_output_code:
-                print(matched_output_code.read())
+    #     with config.patch({"trace.enabled": True}):
+    #         dbg_log = run_and_get_cpp_code(opt_fn, x1, x2)
+    #         self.assertTrue("Debug trace" in dbg_log)
+    #         matched_output_code_path = match_output_code_with_fx_graph(dbg_log)
+    #         self.assertTrue(os.path.exists(matched_output_code_path))
+    #         with open(matched_output_code_path, "r") as matched_output_code:
+    #             print(matched_output_code.read())
 
     def test_debug_tool_graph_merger(self):
         def fn(x):

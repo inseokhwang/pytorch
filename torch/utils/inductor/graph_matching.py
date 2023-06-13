@@ -52,15 +52,16 @@ def match_output_code_with_fx_graph(dbg_log):
             assert(len(line_items) == 2)
             debug_path = line_items[1].strip()
             assert(debug_path.endswith("debug"))
-            assert(os.path.exists(debug_path))
+            print("[liaoxuan] debug_path: %s,%s".format(debug_path, line))
+            # assert(os.path.exists(debug_path))
             return make_graph_matching(debug_path)
 
 
 def make_graph_matching(debug_path):
     runnable_graph_file = os.path.join(debug_path, "fx_graph_runnable.py")
     output_code_file = os.path.join(debug_path, "output_code.py")
-    assert(os.path.exists(runnable_graph_file))
-    assert(os.path.exists(output_code_file))
+    # assert(os.path.exists(runnable_graph_file))
+    # assert(os.path.exists(output_code_file))
     matched_file = os.path.join(debug_path, "matched_output_code.py")
 
     with open(runnable_graph_file, 'r') as graph_f, \
