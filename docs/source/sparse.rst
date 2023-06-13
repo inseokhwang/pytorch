@@ -2,6 +2,8 @@
 
 .. currentmodule:: torch
 
+.. math::
+
 .. _sparse-docs:
 
 torch.sparse
@@ -24,7 +26,7 @@ matrices, pruned weights or points clouds by Tensors whose *elements are
 mostly zero valued*. We recognize these are important applications and aim
 to provide performance optimizations for these use cases via sparse storage formats.
 
-Various sparse storage formats such as COO, CSR/CSC, LIL, etc. have been
+Various sparse storage formats such as COO, CSR/CSC, semi-structured, LIL, etc. have been
 developed over the years. While they differ in exact layouts, they all
 compress data through efficient representation of zero valued elements.
 We call the uncompressed values *specified* in contrast to *unspecified*,
@@ -67,6 +69,8 @@ indices of non-zero elements are stored in this case.
 
 PyTorch currently supports :ref:`COO<sparse-coo-docs>`, :ref:`CSR<sparse-csr-docs>`,
 :ref:`CSC<sparse-csc-docs>`, :ref:`BSR<sparse-bsr-docs>`, and :ref:`BSC<sparse-bsc-docs>`.
+
+We also have a prototype implementation to support :ref: `semi-structured sparsity<sparse-semi-structured-docs>`. 
 Please see the references for more details.
 
 Note that we provide slight generalizations of these formats.
@@ -166,6 +170,160 @@ layouts can be very useful. A subsequent operation might significantly benefit f
 receiving a particular layout. We are working on an API to control the result layout
 and recognize it is an important feature to plan a more optimal path of execution for
 any given model.
+
+.. _sparse-semi-structured-docs:
+
+Sparse Semi-Structured Tensors
+++++++++++++++++++++++++++++++
+
+.. warning::
+
+   Sparse semi-sturctured tensors are currently a prototype feature and subject to change. Please feel free to open an issue to report a bug or if you have feedback to share. 
+
+Semi-Structured sparsity is a sparsity layout introduced in NVIDIA's Ampere architecutre. 
+This kind of sparsity is also known as **fine-grained structured sparsity** or **2:4 structured sparsity**
+
+In this format, we store `n` out of every `2n` elements, where `n` depends on the width of the dtype of the Tensor. The most commonly used dtype is float16, where `n=2`, hence 2:4 structured sparsity.
+For more information about this layout refer `here <https://developer.nvidia.com/blog/exploiting-ampere-structured-sparsity-with-cusparselt>`_.
+
+PyTorch implements support for semi-structured sparsity via a Tensor subclass.
+We store the sparse tensor in compressed form by keeping only our specified elements as well as some metadata that encodes the mask. The metadata overhead is just 2 bits per element in the tensor. 
+
+.. note::
+    The specified elements and metadata mask of a semi-structured sparse tensor are stored together in a single
+    flat compressed tensor. They are appended to each other to form a contiguous chunk of memory. 
+
+    compressed tensor = [ specified elements of original tensor |   metadata_mask ]
+
+    For an original tensor of size `(r, c)` we expect the first `m * k // 2` elements to be the kept elements
+    and the rest of the tensor is metadata.
+
+    In order to make it easier for the user to view the specified elements
+    and mask, one can use ``indices`` and ``values`` to access the mask and specified elements respectively. 
+
+
+      - ``indices`` returns the metadata_mask in a tensor of size `(r, c//2 )` and with element type ``torch.int16``.
+
+      - ``values`` returns the specified elements in a tensor of size `(r, c//2)` and with the same dtype as the dense matrix.
+
+
+Construction of Sparse Semi-Structured Tensors
+----------------------------------------------
+
+A sparse semi-structured tensor can be constructed by calling :func:`torch.sparse.to_sparse_semi_structured`
+This function converts a dense tensor into a sparse semi-structured tensor.
+
+.. warning::
+
+    Note that PyTorch must be compiled with cuSPARSELt support for this function to work properly.
+    cuSPARSELt allows us to accelerate matrix multiplications when one of the operands is a semi-structured sparse tensor.
+
+
+We only support CUDA tensors, as hardware support for semi-structured sparsity is limited to GPUs. 
+
+The following datatypes are supported for semi-structured sparsity. Note that each datatype has their own shape constraints and compression factor.
+
+.. csv-table::
+   :header: "PyTorch dtype", "Shape Constraints", "Compression Factor", "Sparsity Pattern"
+   :widths: 15, 45, 10, 10
+   :delim: ;
+
+   ``torch.float32``; Tensor must be 2D and (r, c) must both be a positive multiple of 8;9/16;1:2
+   ``torch.float16``; Tensor must be 2D and (r, c) must both be a positive multiple of 16;9/16;2:4
+   ``torch.bfloat16``; Tensor must be 2D and (r, c) must both be a positive multiple of 16;9/16;2:4
+   ``torch.int8``; Tensor must be 2D and (r, c) must both be a positive multiple of 32;10/16;4:8
+
+To create a semi-structured sparse tensor we'll first need to create a normal dense tensor that is 2:4 (or semi-structured) sparse. 
+To do this we can tile a small 1x4 strip to create a 16x16 dense float16 tensor. We can then compresss this matirx for accelerated inference by calling ``to_sparse_semi_structured``. 
+
+    >>> from torch.sparse import to_sparse_semi_structured
+    >>> a = torch.Tensor([0, 0, 1, 1]).tile((16, 4)).cuda().half()
+    tensor([[0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.],
+	    [0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1., 0., 0., 1., 1.]],
+	   device='cuda:0', dtype=torch.float16)
+    >>> a = to_sparse_semi_structured(a)
+    SparseSemiStructuredTensor(shape=torch.Size([16, 16])
+     metadata=tensor([[-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370],
+	    [-4370]], device='cuda:0', dtype=torch.int16)
+     values=tensor([[1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.],
+	    [1., 1., 1., 1., 1., 1., 1., 1.]], device='cuda:0',
+	   dtype=torch.float16))
+
+Semi-Structured Sparse Operations
+-------------------------------------------
+
+We currently support the following ops:
+
+- torch.addmm(bias, dense, sparse)
+- torch.addmm(bias, sparse, dense)
+- torch.mm(dense, sparse)
+- torch.mm(sparse, dense)
+- aten.linear.default(dense, sparse, bias)
+- aten.t.default(sparse)
+- aten.t.detach(sparse)
+
+To use these ops, simply pass the output of ``to_sparse_semi_structured(tensor)``  instead of using ``tensor`` once your tensor has 0s in a semi-structured sparse format, like this:
+
+    >>> a = torch.Tensor([0, 0, 1, 1]).tile((64, 16)).half().cuda()
+    >>> b = torch.rand(64, 64).half().cuda()
+    >>> dense = torch.mm(a, b)
+    >>> a = to_sparse_semi_structured(a)
+    >>> sparse = torch.mm(a, b)
+    >>> torch.allclose(dense, sparse))
+    True
+
+
+Accelerating nn.Linear with semi-structured sparsity
+----------------------------------------------------
+You can accelerate the linear layers in your model if the weights are already semi-structured sparse with just a few lines of code:
+
+    >>> input = torch.rand(64, 64).half().cuda()
+    >>> mask = torch.Tensor([0, 0, 1, 1]).tile((64, 16)).cuda()
+    >>> linear = nn.Linear(64, 64).half().cuda()
+    >>> linear.weight.data*=mask
+    >>> linear.weight = nn.Parameter(to_sparse_semi_structured(linear.weight))
 
 
 .. _sparse-coo-docs:
@@ -992,12 +1150,17 @@ multiplication, and ``@`` is matrix multiplication.
    :func:`torch.mv`;no; ``M[sparse_csr] @ V[strided] -> V[strided]``
    :func:`torch.matmul`; no; ``M[sparse_coo] @ M[strided] -> M[strided]``
    :func:`torch.matmul`; no; ``M[sparse_csr] @ M[strided] -> M[strided]``
+   :func:`torch.matmul`; no; ``M[SparseSemiStructured] @ M[strided] -> M[strided]``
+   :func:`torch.matmul`; no; ``M[strided] @ M[SparseSemiStructured] -> M[strided]``
    :func:`torch.mm`; no; ``M[sparse_coo] @ M[strided] -> M[strided]``
+   :func:`torch.mm`; no; ``M[SparseSemiStructured] @ M[strided] -> M[strided]``
+   :func:`torch.mm`; no; ``M[strided] @ M[SparseSemiStructured] -> M[strided]``
    :func:`torch.sparse.mm`; yes; ``M[sparse_coo] @ M[strided] -> M[strided]``
    :func:`torch.smm`; no; ``M[sparse_coo] @ M[strided] -> M[sparse_coo]``
    :func:`torch.hspmm`; no; ``M[sparse_coo] @ M[strided] -> M[hybrid sparse_coo]``
    :func:`torch.bmm`; no; ``T[sparse_coo] @ T[strided] -> T[strided]``
-   :func:`torch.addmm`; no; ``f * M[strided] + f * (M[sparse_coo] @ M[strided]) -> M[strided]``
+   :func:`torch.addmm`; no; ``f * M[strided] + f * (M[SparseSemiStructured] @ M[strided]) -> M[strided]``
+   :func:`torch.addmm`; no; ``f * M[strided] + f * (M[strided] @ M[SparseSemiStructured]) -> M[strided]``
    :func:`torch.sparse.addmm`; yes; ``f * M[strided] + f * (M[sparse_coo] @ M[strided]) -> M[strided]``
    :func:`torch.sspaddmm`; no; ``f * M[sparse_coo] + f * (M[sparse_coo] @ M[strided]) -> M[sparse_coo]``
    :func:`torch.lobpcg`; no; ``GENEIG(M[sparse_coo]) -> M[strided], M[strided]``
