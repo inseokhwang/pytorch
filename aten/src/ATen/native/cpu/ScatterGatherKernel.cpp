@@ -574,6 +574,24 @@ struct cpu_scatter_gather_base_kernel {
   }
 };
 
+#ifndef USE_FBGEMM
+namespace fbgemm {
+
+template <typename K, typename V>
+std::pair<K*, V*> radix_sort_parallel(
+    K* const inp_key_buf,
+    V* const inp_value_buf,
+    K* const tmp_key_buf,
+    V* const tmp_value_buf,
+    const int64_t elements_count,
+    const int64_t max_value) {
+  TORCH_INTERNAL_ASSERT(false, "radix_sort_parallel: ATen not compiled with FBGEMM support");
+  std::make_pair(nullptr, nullptr);
+}
+
+}
+#endif
+
 // Note [scatter reduce optimization]
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
